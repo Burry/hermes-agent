@@ -338,7 +338,13 @@ class BlueBubblesAdapter(BasePlatformAdapter):
         """Compute the external webhook URL for BlueBubbles registration."""
         host = self.webhook_host
         if host in {"0.0.0.0", "127.0.0.1", "localhost", "::"}:
-            host = "localhost"
+            # Use the literal IPv4 loopback address, not the "localhost"
+            # hostname: on dual-stack systems "localhost" often resolves to
+            # ::1 first, but this service only binds IPv4 (127.0.0.1), so a
+            # hostname-based registration causes every webhook dispatch to
+            # fail with ECONNREFUSED on the IPv6 loopback while looking
+            # identical to a correctly-registered webhook via the API.
+            host = "127.0.0.1"
         return f"http://{host}:{self.webhook_port}{self.webhook_path}"
 
     @property
