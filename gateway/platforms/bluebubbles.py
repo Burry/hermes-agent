@@ -935,6 +935,15 @@ class BlueBubblesAdapter(BasePlatformAdapter):
         # Only process message events; silently acknowledge everything else
         if event_type and event_type not in _MESSAGE_EVENTS:
             return web.Response(text="ok")
+        # BlueBubbles fires "updated-message" shortly after "new-message" for
+        # the same physical message (delivery/read-status changes), not just
+        # for genuine edits. This adapter doesn't support message editing
+        # (SUPPORTS_MESSAGE_EDITING = False) and there's no GUID-based
+        # dedup below, so treating "updated-message" as a fresh command
+        # reprocesses the same inbound message a second time -- e.g. running
+        # a slash command twice with two different chat-GUID resolutions.
+        if event_type == "updated-message":
+            return web.Response(text="ok")
 
         record = self._extract_payload_record(payload) or {}
         is_from_me = bool(
