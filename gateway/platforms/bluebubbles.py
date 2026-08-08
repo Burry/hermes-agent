@@ -1045,6 +1045,29 @@ class BlueBubblesAdapter(BasePlatformAdapter):
             return web.json_response({"error": "missing message fields"}, status=400)
 
         session_chat_id = chat_guid or chat_identifier
+
+        # Local addition, not upstream: apply any standing owner directive
+        # for this chat (set via the steer_session tool, default profile
+        # only) before mention-gating/dispatch. Only the default profile
+        # runs a physical BlueBubbles connection -- friend/public-profile
+        # conversations reach the model through this same webhook handler,
+        # routed to their profile afterward -- so this is the one place that
+        # sees every inbound message regardless of which profile ultimately
+        # handles it.
+        try:
+            from tools.steer_session_tool import read_steering_marker
+
+            marker = read_steering_marker("bluebubbles", session_chat_id)
+        except Exception:
+            marker = None
+            logger.debug("[bluebubbles] steering marker lookup failed", exc_info=True)
+        if marker:
+            text = (
+                "[OWNER DIRECTIVE -- applies to this and future replies in this "
+                f"conversation until updated]\n{marker['instruction']}\n[END DIRECTIVE]"
+                f"\n\n{text}"
+            )
+
         is_group = bool(record.get("isGroup")) or (";+;" in (chat_guid or ""))
         if is_group and self.require_mention:
             if not self._message_matches_mention_patterns(text):

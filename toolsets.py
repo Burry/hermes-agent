@@ -564,8 +564,8 @@ TOOLSETS = {
     # "default", so even if this toolset name were ever referenced elsewhere
     # by mistake, the tool itself refuses to activate outside that profile.
     "hermes-bluebubbles-owner": {
-        "description": "BlueBubbles iMessage bot toolset, owner scope - adds agent-directed send_message (default profile only)",
-        "tools": _HERMES_CORE_TOOLS + ["send_message"],
+        "description": "BlueBubbles iMessage bot toolset, owner scope - adds agent-directed send_message and steer_session (default profile only)",
+        "tools": _HERMES_CORE_TOOLS + ["send_message", "steer_session"],
         "includes": []
     },
 
