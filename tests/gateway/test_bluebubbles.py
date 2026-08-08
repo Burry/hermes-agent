@@ -43,6 +43,25 @@ class TestBlueBubblesConfigLoading:
         assert bc.extra["require_mention"] is True
         assert bc.extra["mention_patterns"] == ["(?i)^amos\\b"]
 
+    def test_missing_env_preserves_configured_require_mention(self, monkeypatch):
+        monkeypatch.setenv("BLUEBUBBLES_SERVER_URL", "http://localhost:1234")
+        monkeypatch.setenv("BLUEBUBBLES_PASSWORD", "secret")
+        monkeypatch.delenv("BLUEBUBBLES_REQUIRE_MENTION", raising=False)
+        from gateway.config import GatewayConfig, _apply_env_overrides
+
+        config = GatewayConfig(
+            platforms={
+                Platform.BLUEBUBBLES: PlatformConfig(
+                    enabled=True,
+                    extra={"require_mention": True},
+                )
+            }
+        )
+
+        _apply_env_overrides(config)
+
+        assert config.platforms[Platform.BLUEBUBBLES].extra["require_mention"] is True
+
 
 class TestBlueBubblesHelpers:
     def test_check_requirements(self, monkeypatch):

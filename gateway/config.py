@@ -2458,7 +2458,9 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
             "webhook_path": getenv("BLUEBUBBLES_WEBHOOK_PATH", "/bluebubbles-webhook"),
             "send_read_receipts": is_truthy_value(getenv("BLUEBUBBLES_SEND_READ_RECEIPTS", "true")),
         })
-        bluebubbles_require_mention = getenv("BLUEBUBBLES_REQUIRE_MENTION")
+        bluebubbles_require_mention = _getenv(
+            "BLUEBUBBLES_REQUIRE_MENTION", None
+        )
         if bluebubbles_require_mention is not None:
             config.platforms[Platform.BLUEBUBBLES].extra["require_mention"] = (
                 bluebubbles_require_mention.lower() in {"true", "1", "yes", "on"}
