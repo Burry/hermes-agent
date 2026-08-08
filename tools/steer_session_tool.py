@@ -199,7 +199,7 @@ def steer_session_tool(args, **kw):
         "session_id": session_id,
         "profile": resolved_profile,
         "platform": platform,
-        "note": "Directive will be prepended to this conversation's inbound messages until cleared or replaced.",
+        "note": "Directive installed in this conversation's system prompt; applies to every reply until cleared or replaced.",
     })
 
 
