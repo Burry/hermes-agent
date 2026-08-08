@@ -508,8 +508,14 @@ class BlueBubblesAdapter(BasePlatformAdapter):
                         while len(self._guid_cache) > _GUID_CACHE_SIZE:
                             self._guid_cache.popitem(last=False)
                     return guid
-        except Exception:
-            pass
+        except Exception as exc:
+            # Swallowed by design (caller falls back to _create_chat_for_handle
+            # or a "chat not found" error) -- but silent on a real server
+            # hang/timeout made the eventual failure undebuggable. Log it.
+            logger.warning(
+                "[bluebubbles] chat GUID lookup for %s failed: %s: %s",
+                _redact(target), type(exc).__name__, exc,
+            )
         return None
 
     async def _create_chat_for_handle(
@@ -590,7 +596,11 @@ class BlueBubblesAdapter(BasePlatformAdapter):
                     success=True, message_id=str(msg_id), raw_response=res
                 )
             except Exception as exc:
-                return SendResult(success=False, error=str(exc))
+                # Some exceptions (asyncio.TimeoutError, httpx's timeout
+                # classes) stringify to "" by default -- fall back to the
+                # type name so callers never see a blank error message.
+                detail = str(exc).strip() or type(exc).__name__
+                return SendResult(success=False, error=detail)
         return last
 
     # ------------------------------------------------------------------

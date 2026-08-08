@@ -155,6 +155,21 @@ def _error(message: str) -> dict:
     return {"error": _sanitize_error_text(message)}
 
 
+def _describe_exception(e: Exception) -> str:
+    """Render an exception for an error message, never as an empty string.
+
+    Several common exceptions (asyncio.TimeoutError, httpx's timeout
+    exceptions) stringify to "" by default, producing an unreadable "X
+    failed: " message with no way to tell what happened. Fall back to the
+    exception's type name (plus repr() as a last resort) when str(e) is
+    blank.
+    """
+    text = str(e).strip()
+    if text:
+        return text
+    return type(e).__name__ or repr(e)
+
+
 def _display_chat_id(platform_name: str, chat_id: str) -> str:
     """Return a result-safe chat identifier for tool transcripts/log consumers."""
     if platform_name == "signal" and str(chat_id).startswith("group:"):
@@ -2120,9 +2135,9 @@ async def _send_bluebubbles(extra, chat_id, message):
             try:
                 result = await live_adapter.send(chat_id, message)
             except Exception as e:
-                return _error(f"BlueBubbles send failed: {e}")
+                return _error(f"BlueBubbles send failed: {_describe_exception(e)}")
             if not result.success:
-                return _error(f"BlueBubbles send failed: {result.error}")
+                return _error(f"BlueBubbles send failed: {result.error or '(no error detail; check gateway logs)'}")
             return {"success": True, "platform": "bluebubbles", "chat_id": chat_id, "message_id": result.message_id}
 
     try:
@@ -2142,12 +2157,12 @@ async def _send_bluebubbles(extra, chat_id, message):
         try:
             result = await adapter.send(chat_id, message)
             if not result.success:
-                return _error(f"BlueBubbles send failed: {result.error}")
+                return _error(f"BlueBubbles send failed: {result.error or '(no error detail; check gateway logs)'}")
             return {"success": True, "platform": "bluebubbles", "chat_id": chat_id, "message_id": result.message_id}
         finally:
             await adapter.disconnect()
     except Exception as e:
-        return _error(f"BlueBubbles send failed: {e}")
+        return _error(f"BlueBubbles send failed: {_describe_exception(e)}")
 
 
 # _send_feishu moved to plugins/platforms/feishu/adapter.py::_standalone_send,
