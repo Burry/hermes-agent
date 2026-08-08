@@ -482,3 +482,103 @@ class TestBlueBubblesWebhookRegistration:
         assert len(deleted_ids) == 2
 
 
+
+
+class TestBlueBubblesContacts:
+    """Address-book lookup behind 'bluebubbles:Roland' target resolution."""
+
+    @staticmethod
+    def _with_contacts(monkeypatch, contacts):
+        adapter = _make_adapter(monkeypatch)
+
+        async def fake_get(path):
+            assert path == "/api/v1/contact"
+            return {"status": 200, "data": contacts}
+
+        adapter._api_get = fake_get
+        return adapter
+
+    @pytest.mark.asyncio
+    async def test_parses_both_address_list_shapes(self, monkeypatch):
+        """BlueBubbles ships addresses as objects or bare strings."""
+        adapter = self._with_contacts(monkeypatch, [
+            {"firstName": "Roland", "lastName": "Smith",
+             "phoneNumbers": [{"address": "+14255551111"}],
+             "emails": [{"address": "roland@example.com"}]},
+            {"displayName": "Gabe Oros", "phoneNumbers": ["+14255552222"]},
+        ])
+
+        contacts = await adapter.list_contacts()
+
+        assert contacts[0]["name"] == "Roland Smith"
+        assert contacts[0]["addresses"] == ["+14255551111", "roland@example.com"]
+        assert contacts[1]["name"] == "Gabe Oros"
+        assert contacts[1]["addresses"] == ["+14255552222"]
+
+    @pytest.mark.asyncio
+    async def test_first_name_resolves_to_single_contact(self, monkeypatch):
+        adapter = self._with_contacts(monkeypatch, [
+            {"displayName": "Roland Smith", "phoneNumbers": ["+14255551111"]},
+            {"displayName": "Gabe Oros", "phoneNumbers": ["+14255552222"]},
+        ])
+
+        matches = await adapter.resolve_contact_name("roland")
+
+        assert len(matches) == 1
+        assert matches[0]["addresses"][0] == "+14255551111"
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_name_returns_every_candidate(self, monkeypatch):
+        """Two Rolands surface as two matches so the caller refuses to guess."""
+        adapter = self._with_contacts(monkeypatch, [
+            {"displayName": "Roland Smith", "phoneNumbers": ["+14255551111"]},
+            {"displayName": "Roland Jones", "phoneNumbers": ["+14255553333"]},
+        ])
+
+        assert len(await adapter.resolve_contact_name("Roland")) == 2
+
+    @pytest.mark.asyncio
+    async def test_exact_match_wins_over_prefix(self, monkeypatch):
+        adapter = self._with_contacts(monkeypatch, [
+            {"displayName": "Gabe", "phoneNumbers": ["+14255551111"]},
+            {"displayName": "Gabe Oros", "phoneNumbers": ["+14255552222"]},
+        ])
+
+        matches = await adapter.resolve_contact_name("Gabe")
+
+        assert [m["name"] for m in matches] == ["Gabe"]
+
+    @pytest.mark.asyncio
+    async def test_substring_does_not_match_mid_word(self, monkeypatch):
+        adapter = self._with_contacts(monkeypatch, [
+            {"displayName": "Roland Smith", "phoneNumbers": ["+14255551111"]},
+        ])
+
+        assert await adapter.resolve_contact_name("olan") == []
+
+    @pytest.mark.asyncio
+    async def test_contacts_are_cached_between_calls(self, monkeypatch):
+        adapter = self._with_contacts(monkeypatch, [
+            {"displayName": "Roland", "phoneNumbers": ["+14255551111"]},
+        ])
+        calls = []
+        original = adapter._api_get
+
+        async def counting(path):
+            calls.append(path)
+            return await original(path)
+
+        adapter._api_get = counting
+        await adapter.list_contacts()
+        await adapter.list_contacts()
+
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_contact_without_address_is_skipped(self, monkeypatch):
+        adapter = self._with_contacts(monkeypatch, [
+            {"displayName": "No Number"},
+            {"displayName": "Roland", "phoneNumbers": ["+14255551111"]},
+        ])
+
+        assert [c["name"] for c in await adapter.list_contacts()] == ["Roland"]

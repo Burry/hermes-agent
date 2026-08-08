@@ -324,3 +324,81 @@ def test_plugin_parser_stays_authoritative_despite_fallback() -> None:
 
     assert chat_id is None
     assert error is not None
+
+
+def test_bulk_send_collapses_duplicate_recipients() -> None:
+    sent_targets = []
+
+    def fake_send(args):
+        sent_targets.append(args["target"])
+        return json.dumps({"success": True})
+
+    with patch("tools.send_message_tool._handle_send", side_effect=fake_send), \
+         patch("tools.send_message_tool._BULK_SEND_DELAY_SECONDS", 0):
+        result = json.loads(
+            send_message_tool(
+                {
+                    "action": "send",
+                    "targets": [
+                        "bluebubbles:+14255551111",
+                        "bluebubbles:+14255552222",
+                        "bluebubbles:+14255551111",
+                    ],
+                    "message": "party at 7",
+                }
+            )
+        )
+
+    assert sent_targets == [
+        "bluebubbles:+14255551111",
+        "bluebubbles:+14255552222",
+    ]
+    assert result["delivered"] == 2
+    assert result["recipients"] == 2
+    assert "duplicate" in result["note"]
+
+
+class _FakeBlueBubblesAdapter:
+    def __init__(self, matches):
+        self._matches = matches
+
+    async def resolve_contact_name(self, _name):
+        return self._matches
+
+
+def test_bluebubbles_contact_name_resolves_after_directory_miss() -> None:
+    adapter = _FakeBlueBubblesAdapter(
+        [{"name": "Roland Smith", "addresses": ["+14255551111"]}]
+    )
+    runner = SimpleNamespace(
+        adapters={Platform.BLUEBUBBLES: adapter},
+        _gateway_loop=None,
+    )
+    bluebubbles_config = SimpleNamespace(enabled=True, token=None, extra={})
+    config = SimpleNamespace(
+        platforms={Platform.BLUEBUBBLES: bluebubbles_config},
+        get_home_channel=lambda _platform: None,
+    )
+
+    with patch("gateway.config.load_gateway_config", return_value=config), \
+         patch("gateway.channel_directory.resolve_channel_name", return_value=None), \
+         patch("gateway.run._gateway_runner_ref", return_value=runner), \
+         patch("model_tools._run_async", side_effect=_run_async_immediately), \
+         patch("tools.interrupt.is_interrupted", return_value=False), \
+         patch(
+             "tools.send_message_tool._send_to_platform",
+             new=AsyncMock(return_value={"success": True}),
+         ) as send_mock, \
+         patch("gateway.mirror.mirror_to_session", return_value=True):
+        result = json.loads(
+            send_message_tool(
+                {
+                    "action": "send",
+                    "target": "bluebubbles:Roland",
+                    "message": "hello",
+                }
+            )
+        )
+
+    assert result["success"] is True
+    assert send_mock.await_args.args[2] == "+14255551111"

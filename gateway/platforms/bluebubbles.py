@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from collections import OrderedDict
 from datetime import datetime
@@ -122,6 +123,7 @@ _PHONE_RE = re.compile(r"\+?\d{7,15}")
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 
 _GUID_CACHE_SIZE = 500  # LRU cap for resolved chat-GUID lookups
+_CONTACT_CACHE_TTL = 300.0  # seconds; the address book changes rarely
 
 
 def _redact(text: str) -> str:
@@ -202,6 +204,8 @@ class BlueBubblesAdapter(BasePlatformAdapter):
         self._private_api_enabled: Optional[bool] = None
         self._helper_connected: bool = False
         self._guid_cache: OrderedDict[str, str] = OrderedDict()
+        self._contact_cache: Optional[List[Dict[str, Any]]] = None
+        self._contact_cache_at: float = 0.0
 
     # ------------------------------------------------------------------
     # API helpers
@@ -542,6 +546,90 @@ class BlueBubblesAdapter(BasePlatformAdapter):
             # existing chat, so a blank error here is what the caller saw.
             detail = str(exc).strip() or type(exc).__name__
             return SendResult(success=False, error=detail)
+
+    # ------------------------------------------------------------------
+    # Contacts
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _contact_display_name(raw: Dict[str, Any]) -> str:
+        """Best available human name for a contact record."""
+        display = (raw.get("displayName") or "").strip()
+        if display:
+            return display
+        parts = [
+            (raw.get("firstName") or "").strip(),
+            (raw.get("lastName") or "").strip(),
+        ]
+        return " ".join(p for p in parts if p).strip()
+
+    @staticmethod
+    def _contact_addresses(raw: Dict[str, Any]) -> List[str]:
+        """Every sendable address on a contact record.
+
+        BlueBubbles has shipped both shapes for these lists -- bare strings and
+        ``{"address": ...}`` objects -- so accept either rather than silently
+        resolving to zero addresses after a server upgrade.
+        """
+        out: List[str] = []
+        for key in ("phoneNumbers", "emails"):
+            for entry in raw.get(key) or []:
+                if isinstance(entry, str):
+                    value = entry.strip()
+                elif isinstance(entry, dict):
+                    value = str(entry.get("address") or entry.get("value") or "").strip()
+                else:
+                    value = ""
+                if value and value not in out:
+                    out.append(value)
+        return out
+
+    async def list_contacts(self, *, force: bool = False) -> List[Dict[str, Any]]:
+        """Fetch the server address book as ``{"name", "addresses"}`` records."""
+        now = time.monotonic()
+        if (
+            not force
+            and self._contact_cache is not None
+            and (now - self._contact_cache_at) < _CONTACT_CACHE_TTL
+        ):
+            return self._contact_cache
+        res = await self._api_get("/api/v1/contact")
+        contacts: List[Dict[str, Any]] = []
+        for raw in res.get("data") or []:
+            if not isinstance(raw, dict):
+                continue
+            name = self._contact_display_name(raw)
+            addresses = self._contact_addresses(raw)
+            if name and addresses:
+                contacts.append({"name": name, "addresses": addresses})
+        self._contact_cache = contacts
+        self._contact_cache_at = now
+        return contacts
+
+    async def resolve_contact_name(self, query: str) -> List[Dict[str, Any]]:
+        """Return contacts matching *query*, most specific match tier only.
+
+        Deliberately returns every candidate instead of collapsing to a best
+        guess: picking one of several "Roland"s is how a message reaches the
+        wrong person. The caller refuses on ambiguity.
+        """
+        wanted = (query or "").strip().casefold()
+        if not wanted:
+            return []
+        contacts = await self.list_contacts()
+        exact = [c for c in contacts if c["name"].casefold() == wanted]
+        if exact:
+            return exact
+        prefix = [c for c in contacts if c["name"].casefold().startswith(wanted)]
+        if prefix:
+            return prefix
+        # Match on a word boundary so "roland" finds "Roland Smith" without
+        # "an" sweeping in every contact that merely contains those letters.
+        return [
+            c
+            for c in contacts
+            if any(word.startswith(wanted) for word in c["name"].casefold().split())
+        ]
 
     # ------------------------------------------------------------------
     # Text sending

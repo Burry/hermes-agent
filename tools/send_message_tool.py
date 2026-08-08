@@ -222,6 +222,9 @@ async def _send_telegram_message_with_retry(bot, *, attempts: int = 3, **kwargs)
             await asyncio.sleep(delay)
 
 
+_MAX_BULK_RECIPIENTS = 25
+_BULK_SEND_DELAY_SECONDS = 0.5
+
 SEND_MESSAGE_SCHEMA = {
     "name": "send_message",
     "description": (
@@ -242,7 +245,12 @@ SEND_MESSAGE_SCHEMA = {
             },
             "target": {
                 "type": "string",
-                "description": "Delivery target. Format: 'platform' (uses home channel), 'platform:#channel-name', 'platform:chat_id', or 'platform:chat_id:thread_id' for Telegram topics and Discord threads. Examples: 'telegram', 'telegram:-1001234567890:17585', 'discord:999888777:555444333', 'discord:#bot-home', 'slack:#engineering', 'signal:+155****4567', 'matrix:!roomid:server.org', 'matrix:@user:server.org', 'ntfy:alerts-channel' (explicit ntfy topic), 'yuanbao:direct:<account_id>' (DM), 'yuanbao:group:<group_code>' (group chat)"
+                "description": "Delivery target. Format: 'platform' (uses home channel), 'platform:#channel-name', 'platform:chat_id', or 'platform:chat_id:thread_id' for Telegram topics and Discord threads. Examples: 'telegram', 'telegram:-1001234567890:17585', 'discord:999888777:555444333', 'discord:#bot-home', 'slack:#engineering', 'signal:+155****4567', 'matrix:!roomid:server.org', 'matrix:@user:server.org', 'ntfy:alerts-channel' (explicit ntfy topic), 'yuanbao:direct:<account_id>' (DM), 'yuanbao:group:<group_code>' (group chat). On bluebubbles you may also use a contact name ('bluebubbles:Roland') — it resolves against the server address book and errors if the name is ambiguous."
+            },
+            "targets": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": f"Send the same message to several recipients (max {_MAX_BULK_RECIPIENTS}). Each entry uses the same format as 'target'. Use this for announcements or invites to a group of people. Returns per-recipient delivery results. Duplicate recipients are collapsed — this fans one message out to many people, it does not send repeatedly to one person."
             },
             "message": {
                 "type": "string",
@@ -266,6 +274,9 @@ def send_message_tool(args, **kw):
     """Handle cross-channel send_message tool calls."""
     action = args.get("action", "send")
 
+    if action == "send" and args.get("targets"):
+        return _handle_bulk_send(args)
+
     if action == "list":
         return _handle_list()
 
@@ -276,6 +287,76 @@ def send_message_tool(args, **kw):
         return _handle_react(args, remove=True)
 
     return _handle_send(args)
+
+
+def _handle_bulk_send(args):
+    """Fan one message out to several distinct recipients.
+
+    Each recipient goes through the ordinary single-send path, so contact
+    resolution, the no-silent-redirect guard, and per-platform delivery behave
+    identically to a one-off send. Delivery is reported per recipient: a
+    partial failure names exactly who did not receive it.
+    """
+    targets = args.get("targets")
+    if not isinstance(targets, list) or not targets:
+        return tool_error("'targets' must be a non-empty list of target strings.")
+    if not args.get("message"):
+        return tool_error("'message' is required when action='send'.")
+
+    # Collapse duplicates, preserving order. This is a fan-out primitive --
+    # one message to many people -- so a repeated recipient is a mistake, not
+    # a request to message that person several times.
+    ordered, seen = [], set()
+    for raw_target in targets:
+        candidate = str(raw_target).strip()
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            ordered.append(candidate)
+    if not ordered:
+        return tool_error("No valid targets supplied.")
+    if len(ordered) > _MAX_BULK_RECIPIENTS:
+        return tool_error(
+            f"{len(ordered)} recipients exceeds the {_MAX_BULK_RECIPIENTS}-recipient "
+            "cap for one call. Split the list across several calls."
+        )
+
+    from tools.interrupt import is_interrupted
+
+    results, interrupted = [], False
+    for index, target in enumerate(ordered):
+        if is_interrupted():
+            interrupted = True
+            break
+        if index:
+            # Space out sends; a burst trips iMessage's own rate limiting and
+            # gets the account flagged.
+            time.sleep(_BULK_SEND_DELAY_SECONDS)
+        try:
+            parsed = json.loads(_handle_send({**args, "target": target}))
+        except Exception as exc:
+            parsed = {"error": f"send failed: {exc}"}
+        entry = {"target": target, "success": bool(parsed.get("success"))}
+        if not entry["success"]:
+            entry["error"] = parsed.get("error") or "send failed"
+        results.append(entry)
+
+    delivered = sum(1 for r in results if r["success"])
+    payload = {
+        "success": delivered > 0,
+        "recipients": len(ordered),
+        "delivered": delivered,
+        "failed": len(results) - delivered,
+        "results": results,
+    }
+    if len(ordered) != len(targets):
+        payload["note"] = (
+            f"{len(targets) - len(ordered)} duplicate recipient(s) collapsed; "
+            "each person receives the message once."
+        )
+    if interrupted:
+        payload["interrupted"] = True
+        payload["not_attempted"] = len(ordered) - len(results)
+    return json.dumps(payload)
 
 
 def _handle_list():
@@ -377,6 +458,64 @@ def _handle_react(args, remove=False):
     return json.dumps({"success": bool(result)})
 
 
+def _resolve_bluebubbles_contact(name):
+    """Resolve a contact name to a sendable iMessage address.
+
+    Returns ``(address, None)`` on an unambiguous match, else
+    ``(None, <tool_error>)``. Ambiguity is always an error, never a guess --
+    silently picking one of several matching contacts is how a message reaches
+    the wrong person.
+    """
+    runner = None
+    try:
+        from gateway.run import _gateway_runner_ref
+        runner = _gateway_runner_ref()
+    except Exception:
+        runner = None
+    adapter = None
+    if runner is not None:
+        try:
+            from gateway.config import Platform as _Platform
+            adapter = runner.adapters.get(_Platform.BLUEBUBBLES)
+        except Exception:
+            adapter = None
+    if adapter is None or not hasattr(adapter, "resolve_contact_name"):
+        return None, tool_error(
+            f"Could not resolve '{name}' on bluebubbles: contact lookup needs a "
+            "live gateway adapter. Use an explicit phone number or email address."
+        )
+    try:
+        from model_tools import _run_async
+        matches = _run_async(
+            _await_on_gateway_loop(lambda: adapter.resolve_contact_name(name), runner)
+        )
+    except Exception as e:
+        return None, tool_error(
+            f"BlueBubbles contact lookup for '{name}' failed: {_describe_exception(e)}"
+        )
+    if not matches:
+        return None, tool_error(
+            f"No BlueBubbles contact matches '{name}'. Use an explicit phone number "
+            "or email address, or send_message(action='list') for known chats."
+        )
+    if len(matches) > 1:
+        listed = "; ".join(
+            f"{m['name']} ({', '.join(m['addresses'][:2])})" for m in matches[:8]
+        )
+        return None, tool_error(
+            f"'{name}' matches {len(matches)} BlueBubbles contacts: {listed}. "
+            "Re-send using the exact address so it cannot reach the wrong person."
+        )
+    addresses = matches[0].get("addresses") or []
+    if not addresses:
+        return None, tool_error(
+            f"BlueBubbles contact '{matches[0].get('name')}' has no sendable address."
+        )
+    # _contact_addresses lists phone numbers before emails, so this prefers the
+    # number -- the right default for iMessage.
+    return addresses[0], None
+
+
 def _handle_send(args):
     """Send a message to a platform target."""
     target = args.get("target", "")
@@ -395,6 +534,11 @@ def _handle_send(args):
         chat_id, thread_id, resolution_error = resolve_send_target(
             platform_name, target_ref
         )
+        if resolution_error and platform_name == "bluebubbles":
+            chat_id, contact_error = _resolve_bluebubbles_contact(target_ref)
+            if contact_error:
+                return contact_error
+            resolution_error = None
         if resolution_error:
             return tool_error(resolution_error)
 
