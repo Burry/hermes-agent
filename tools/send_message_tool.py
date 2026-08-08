@@ -2167,7 +2167,19 @@ def _check_send_message():
     summary), which is the canonical pattern for any worker that needs to
     reply with more than the ~200-char first-line truncation the kanban
     notifier applies.
+
+    Local addition, not upstream: also requires the active profile be
+    "default". Upstream deliberately doesn't register this as an
+    agent-callable tool at all -- "the agent should not decide on its own to
+    fire off cross-platform messages" (#47856). Re-registering it (via the
+    hermes-bluebubbles-owner toolset) reverses that only for one explicitly
+    configured, owner-only scope; this check is the second, code-level half
+    of that scoping -- it holds even if a toolset config mistake ever exposed
+    this tool's schema somewhere it shouldn't be.
     """
+    from hermes_cli.profiles import get_active_profile_name
+    if get_active_profile_name() != "default":
+        return False
     if os.environ.get("HERMES_KANBAN_TASK"):
         return True
     from gateway.session_context import get_session_env
@@ -2288,16 +2300,29 @@ async def _send_yuanbao(chat_id, message, media_files=None):
 
 
 # --- Registry ---
-from tools.registry import tool_error
+from tools.registry import registry, tool_error
 
-# NOTE: ``send_message`` is intentionally NOT registered as an agent-callable
-# model tool. The agent should not decide on its own to fire off cross-platform
-# messages or reactions. The send engine in this module (``_send_to_platform``,
-# ``_send_via_adapter``, ``_parse_target_ref``, the per-platform ``_send_*``
-# helpers) remains the shared transport used by:
-#   - cron delivery (cron/scheduler.py)
-#   - the ``hermes send`` CLI command (hermes_cli/send_cmd.py)
-#   - the gateway kanban notifier (dashboard-toggled, outside agent control)
-#   - the standalone MCP server (mcp_serve.py), which is an opt-in surface
-# Those callers import the helpers directly; none of them need the registry
-# entry.
+# Upstream deliberately does NOT register ``send_message`` as an agent-callable
+# model tool -- "the agent should not decide on its own to fire off
+# cross-platform messages or reactions" (#47856). The send engine in this
+# module (``_send_to_platform``, ``_send_via_adapter``, ``_parse_target_ref``,
+# the per-platform ``_send_*`` helpers) remains the shared transport used by
+# cron delivery, the ``hermes send`` CLI, the kanban notifier, and the
+# standalone MCP server, none of which need the registry entry below.
+#
+# Local addition, not upstream: registering it here reinstates agent-callable
+# messaging, but ONLY for one explicitly owner-scoped surface. It reaches the
+# model's schema solely via the "hermes-bluebubbles-owner" toolset (not the
+# default "hermes-bluebubbles" one -- see toolsets.py and
+# platform_toolsets.bluebubbles in config.yaml), and even there,
+# ``_check_send_message`` additionally refuses to activate outside the
+# "default" profile. Both the toolset-membership scoping and the check_fn
+# scoping have to agree for this tool to appear in a session's schema.
+registry.register(
+    name="send_message",
+    toolset="messaging",
+    schema=SEND_MESSAGE_SCHEMA,
+    handler=send_message_tool,
+    check_fn=_check_send_message,
+    emoji="📨",
+)

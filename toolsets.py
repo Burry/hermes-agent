@@ -552,6 +552,23 @@ TOOLSETS = {
         "includes": []
     },
 
+    # Local addition, not upstream: adds the agent-callable send_message tool
+    # on top of the standard BlueBubbles toolset. send_message is deliberately
+    # NOT in _HERMES_CORE_TOOLS upstream (removed in #47856 -- "the agent
+    # should not decide on its own to fire off cross-platform messages").
+    # This toolset exists so ONE specific, explicitly-configured scope (the
+    # owner's own default-profile BlueBubbles sessions -- see
+    # platform_toolsets.bluebubbles in config.yaml) can direct the agent to
+    # message an arbitrary contact on command. send_message_tool.py's
+    # _check_send_message additionally gates on the active profile being
+    # "default", so even if this toolset name were ever referenced elsewhere
+    # by mistake, the tool itself refuses to activate outside that profile.
+    "hermes-bluebubbles-owner": {
+        "description": "BlueBubbles iMessage bot toolset, owner scope - adds agent-directed send_message (default profile only)",
+        "tools": _HERMES_CORE_TOOLS + ["send_message"],
+        "includes": []
+    },
+
     "hermes-homeassistant": {
         "description": "Home Assistant bot toolset - smart home event monitoring and control",
         "tools": _HERMES_CORE_TOOLS,
