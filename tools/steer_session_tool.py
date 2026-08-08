@@ -113,11 +113,13 @@ STEER_SESSION_SCHEMA = {
     "name": "steer_session",
     "description": (
         "Leave (or clear) a standing directive for another BlueBubbles conversation, most "
-        "commonly a friend's session on the public profile. The directive is prepended to "
-        "that conversation's inbound messages as a clearly-labeled owner instruction on "
-        "every future turn, until you clear it or set a new one -- it is NOT a one-time "
-        "nudge. Use session_search first to find the session_id you want to steer. Only "
-        "available from the default profile."
+        "commonly a friend's session on the public profile. The directive is installed in "
+        "that conversation's system prompt as an operator instruction and applies on every "
+        "future turn, until you clear it or set a new one -- it is NOT a one-time nudge. "
+        "Best suited to persistent tone, persona, and topic guidance (e.g. 'reply in "
+        "Spanish', 'keep answers to two sentences', 'never discuss my work schedule'). "
+        "Use session_search first to find the session_id you want to steer. Only available "
+        "from the default profile."
     ),
     "parameters": {
         "type": "object",
@@ -129,8 +131,10 @@ STEER_SESSION_SCHEMA = {
             "instruction": {
                 "type": "string",
                 "description": (
-                    "The directive to inject into that conversation going forward. Pass an "
-                    "empty string to clear any standing directive for that conversation."
+                    "The directive to install for that conversation going forward, written "
+                    "as an instruction to the assistant (e.g. 'Be dry and sarcastic; skip "
+                    "pleasantries'). Pass an empty string to clear any standing directive "
+                    "for that conversation."
                 ),
             },
             "profile": {

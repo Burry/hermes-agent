@@ -1152,27 +1152,17 @@ class BlueBubblesAdapter(BasePlatformAdapter):
 
         session_chat_id = chat_guid or chat_identifier
 
-        # Local addition, not upstream: apply any standing owner directive
-        # for this chat (set via the steer_session tool, default profile
-        # only) before mention-gating/dispatch. Only the default profile
-        # runs a physical BlueBubbles connection -- friend/public-profile
-        # conversations reach the model through this same webhook handler,
-        # routed to their profile afterward -- so this is the one place that
-        # sees every inbound message regardless of which profile ultimately
-        # handles it.
-        try:
-            from tools.steer_session_tool import read_steering_marker
-
-            marker = read_steering_marker("bluebubbles", session_chat_id)
-        except Exception:
-            marker = None
-            logger.debug("[bluebubbles] steering marker lookup failed", exc_info=True)
-        if marker:
-            text = (
-                "[OWNER DIRECTIVE -- applies to this and future replies in this "
-                f"conversation until updated]\n{marker['instruction']}\n[END DIRECTIVE]"
-                f"\n\n{text}"
-            )
+        # Standing owner directives (steer_session) are NOT applied here.
+        # They are delivered as a system-prompt block in
+        # ``GatewayRunner._steering_directive_prompt``, keyed by the same
+        # (platform, chat_id) this handler builds below.
+        #
+        # This used to prepend the directive onto ``text``, which broke two
+        # things: the model received one user turn containing an instruction
+        # *and* a message and replied to both, and the mention gate below then
+        # matched against the directive's own words -- so a directive that
+        # happened to contain "Clu" made the bot answer group messages that
+        # were never addressed to it.
 
         is_group = bool(record.get("isGroup")) or (";+;" in (chat_guid or ""))
         if is_group and self.require_mention:
