@@ -62,6 +62,24 @@ class TestBlueBubblesConfigLoading:
 
         assert config.platforms[Platform.BLUEBUBBLES].extra["require_mention"] is True
 
+    def test_runner_is_injected_into_bluebubbles_adapter(self, monkeypatch):
+        monkeypatch.setenv("BLUEBUBBLES_SERVER_URL", "http://localhost:1234")
+        monkeypatch.setenv("BLUEBUBBLES_PASSWORD", "secret")
+        from gateway.config import GatewayConfig
+        from gateway.run import GatewayRunner
+
+        runner = GatewayRunner.__new__(GatewayRunner)
+        runner.config = GatewayConfig()
+        config = PlatformConfig(
+            enabled=True,
+            extra={"server_url": "http://localhost:1234", "password": "secret"},
+        )
+
+        adapter = runner._create_adapter(Platform.BLUEBUBBLES, config)
+
+        assert adapter is not None
+        assert adapter.gateway_runner is runner
+
 
 class TestBlueBubblesHelpers:
     def test_check_requirements(self, monkeypatch):
