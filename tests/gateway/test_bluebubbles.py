@@ -280,14 +280,21 @@ class TestBlueBubblesAttachmentDownload:
 
 
 class TestBlueBubblesWebhookUrl:
-    """_webhook_url property normalises local hosts to 'localhost'."""
+    """_webhook_url preserves the listener's address family."""
 
     def test_default_host(self, monkeypatch):
         adapter = _make_adapter(monkeypatch)
-        # Default webhook_host is 0.0.0.0 → normalized to localhost
-        assert "localhost" in adapter._webhook_url
+        assert adapter._webhook_url.startswith("http://127.0.0.1:")
         assert str(adapter.webhook_port) in adapter._webhook_url
         assert adapter.webhook_path in adapter._webhook_url
+
+    def test_wildcard_ipv4_registers_loopback_ipv4(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, webhook_host="0.0.0.0")
+        assert adapter._webhook_url.startswith("http://127.0.0.1:")
+
+    def test_wildcard_ipv6_registers_loopback_ipv6(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, webhook_host="::")
+        assert adapter._webhook_url.startswith("http://[::1]:")
 
 
     def test_register_url_omits_query_when_no_password(self, monkeypatch):
