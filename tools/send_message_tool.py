@@ -2095,7 +2095,36 @@ async def _send_weixin(pconfig, chat_id, message, media_files=None):
 
 
 async def _send_bluebubbles(extra, chat_id, message):
-    """Send via BlueBubbles iMessage server using the adapter's REST API."""
+    """Send via BlueBubbles iMessage server, preferring the live gateway adapter.
+
+    A live gateway's BlueBubblesAdapter already owns a bound webhook listener
+    on ``webhook_host:webhook_port``. Unconditionally constructing a second
+    adapter and calling ``connect()`` (the old behavior) tries to bind that
+    same host:port again, which collides with the running listener instead of
+    ever reaching ``adapter.send()`` -- this is what made agent-directed sends
+    to arbitrary contacts hang/time out from a live BlueBubbles session.
+    Mirrors the live-adapter-first pattern every other platform already uses
+    via ``_send_via_adapter``. Falls back to a standalone connect/send/
+    disconnect only when no live adapter exists (cron or other
+    out-of-process delivery, e.g. `hermes send`).
+    """
+    try:
+        from gateway.run import _gateway_runner_ref
+        runner = _gateway_runner_ref()
+    except Exception:
+        runner = None
+    if runner is not None:
+        from gateway.config import Platform as _Platform
+        live_adapter = runner.adapters.get(_Platform.BLUEBUBBLES)
+        if live_adapter is not None:
+            try:
+                result = await live_adapter.send(chat_id, message)
+            except Exception as e:
+                return _error(f"BlueBubbles send failed: {e}")
+            if not result.success:
+                return _error(f"BlueBubbles send failed: {result.error}")
+            return {"success": True, "platform": "bluebubbles", "chat_id": chat_id, "message_id": result.message_id}
+
     try:
         from gateway.platforms.bluebubbles import BlueBubblesAdapter, check_bluebubbles_requirements
         if not check_bluebubbles_requirements():
