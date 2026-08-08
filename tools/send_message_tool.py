@@ -45,6 +45,8 @@ _PHONE_PLATFORMS = frozenset({"photon", "signal", "sms", "whatsapp"})
 _E164_TARGET_RE = re.compile(r"^\s*\+(\d{7,15})\s*$")
 # Photon DM chat GUID (mirrors _DM_CHAT_GUID_RE in the photon adapter).
 _PHOTON_DM_GUID_RE = re.compile(r"^any;-;\+\d{6,}$")
+# BlueBubbles chat GUID: "<service>;<kind>;<identifier>".
+_BLUEBUBBLES_GUID_RE = re.compile(r"^\s*[A-Za-z]+;[-+];[^\s;]+\s*$")
 # WhatsApp JIDs: group chats (<digits>@g.us), individual users
 # (<phone>@s.whatsapp.net), linked identities (<id>@lid), and broadcast /
 # newsletter chats. These are explicit native targets the bridge accepts
@@ -626,6 +628,11 @@ def _parse_target_ref(platform_name: str, target_ref: str):
         # adapter resolves itself — pass through verbatim instead of bouncing
         # them off the channel directory (mirrors the react handler).
         if _PHOTON_DM_GUID_RE.fullmatch(target_ref.strip()):
+            return target_ref.strip(), None, True
+    if platform_name == "bluebubbles":
+        if _BLUEBUBBLES_GUID_RE.fullmatch(target_ref):
+            return target_ref.strip(), None, True
+        if _E164_TARGET_RE.fullmatch(target_ref):
             return target_ref.strip(), None, True
     if target_ref.lstrip("-").isdigit():
         return target_ref, None, True
@@ -2109,6 +2116,23 @@ async def _send_weixin(pconfig, chat_id, message, media_files=None):
         return _error(f"Weixin send failed: {e}")
 
 
+async def _await_on_gateway_loop(make_coro, runner):
+    """Await an adapter coroutine on the loop that owns its HTTP client."""
+    gateway_loop = getattr(runner, "_gateway_loop", None)
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+    if (
+        gateway_loop is not None
+        and gateway_loop is not current_loop
+        and gateway_loop.is_running()
+    ):
+        future = asyncio.run_coroutine_threadsafe(make_coro(), gateway_loop)
+        return await asyncio.wrap_future(future)
+    return await make_coro()
+
+
 async def _send_bluebubbles(extra, chat_id, message):
     """Send via BlueBubbles iMessage server, preferring the live gateway adapter.
 
@@ -2133,7 +2157,10 @@ async def _send_bluebubbles(extra, chat_id, message):
         live_adapter = runner.adapters.get(_Platform.BLUEBUBBLES)
         if live_adapter is not None:
             try:
-                result = await live_adapter.send(chat_id, message)
+                result = await _await_on_gateway_loop(
+                    lambda: live_adapter.send(chat_id, message),
+                    runner,
+                )
             except Exception as e:
                 return _error(f"BlueBubbles send failed: {_describe_exception(e)}")
             if not result.success:

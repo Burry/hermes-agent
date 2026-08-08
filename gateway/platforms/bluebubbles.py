@@ -512,9 +512,13 @@ class BlueBubblesAdapter(BasePlatformAdapter):
             # Swallowed by design (caller falls back to _create_chat_for_handle
             # or a "chat not found" error) -- but silent on a real server
             # hang/timeout made the eventual failure undebuggable. Log it.
+            # Pass the target through unwrapped: the gateway's log filter
+            # already partial-masks phone numbers ("+142****7675"), which keeps
+            # the last four digits. _redact() here would collapse it to
+            # "[REDACTED]" and make the failing recipient unidentifiable.
             logger.warning(
                 "[bluebubbles] chat GUID lookup for %s failed: %s: %s",
-                _redact(target), type(exc).__name__, exc,
+                target, type(exc).__name__, exc,
             )
         return None
 
@@ -533,7 +537,11 @@ class BlueBubblesAdapter(BasePlatformAdapter):
             msg_id = data.get("guid") or data.get("messageGuid") or "ok"
             return SendResult(success=True, message_id=str(msg_id), raw_response=res)
         except Exception as exc:
-            return SendResult(success=False, error=str(exc))
+            # Same empty-str(exc) trap as send(): timeout exceptions stringify
+            # to "". This is the path that actually runs when a handle has no
+            # existing chat, so a blank error here is what the caller saw.
+            detail = str(exc).strip() or type(exc).__name__
+            return SendResult(success=False, error=detail)
 
     # ------------------------------------------------------------------
     # Text sending

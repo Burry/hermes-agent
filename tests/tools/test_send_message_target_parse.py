@@ -25,6 +25,20 @@ def test_photon_e164_target_is_explicit() -> None:
     assert is_explicit is True
 
 
+def test_bluebubbles_native_targets_are_explicit() -> None:
+    for target in (
+        "any;-;+14255551234",
+        "any;+;9924cfe7158546dabeb1eadc0dd43257",
+        "iMessage;-;friend@example.com",
+        "+14255551234",
+    ):
+        chat_id, thread_id, is_explicit = _parse_target_ref("bluebubbles", target)
+
+        assert chat_id == target
+        assert thread_id is None
+        assert is_explicit is True
+
+
 def test_e164_target_still_requires_phone_platform() -> None:
     assert _parse_target_ref("matrix", "+15551234567")[2] is False
 
