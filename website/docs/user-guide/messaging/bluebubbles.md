@@ -52,7 +52,10 @@ platforms:
 
 With `require_mention: true`, DMs still work normally, but group-chat messages are ignored unless they match a mention pattern. If you do not configure custom patterns, Hermes uses conservative defaults for `Hermes` and `@Hermes agent` variants.
 
-To let a mentioned agent catch up on group messages sent since its previous reply, enable history backfill. The messages become read-only channel context for that turn; they do not wake the agent or create separate turns.
+To let a mentioned agent catch up on group messages, enable history backfill. The first
+mentioned turn imports a bounded recent-history window into the durable shared session.
+Later turns import only messages sent since the agent's previous reply. Backfilled messages
+are read-only channel context; they do not wake the agent or create separate turns.
 
 ```yaml
 platforms:

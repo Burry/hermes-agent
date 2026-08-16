@@ -1,6 +1,7 @@
 """Tests for the BlueBubbles iMessage gateway adapter."""
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -163,6 +164,20 @@ class TestBlueBubblesMentionGating:
         adapter.set_authorization_check(
             lambda user_id, _chat_type, _chat_id: user_id != "+15555550101"
         )
+        store = SimpleNamespace(
+            peek_session_id=lambda _key: "shared-session",
+            load_transcript=lambda _session_id: [
+                {
+                    "role": "user",
+                    "content": "[Recent group history bootstrap]\n[Clu] hello",
+                }
+            ],
+        )
+        adapter.gateway_runner = SimpleNamespace(
+            session_store=store,
+            _session_key_for_source=lambda _source: "shared-group-key",
+            _profile_name_for_source=lambda _source: None,
+        )
 
         async def fake_handle_message(event):
             handled.append(event)
@@ -234,6 +249,87 @@ class TestBlueBubblesMentionGating:
         assert "[unverified] [+15555550101]" in context
         assert "already in transcript" not in context
         assert "Clu, catch up" not in context
+
+    @pytest.mark.asyncio
+    async def test_first_mentioned_message_bootstraps_history_across_agent_replies(
+        self, monkeypatch
+    ):
+        adapter = _make_adapter(
+            monkeypatch,
+            require_mention=True,
+            mention_patterns=[r"(?i)^@?clu\b"],
+            history_backfill=True,
+            send_read_receipts=False,
+        )
+        handled = []
+        store = SimpleNamespace(
+            peek_session_id=lambda _key: "shared-session",
+            load_transcript=lambda _session_id: [
+                {"role": "user", "content": "[Recent group messages]\n[Pat] hi"}
+            ],
+        )
+        adapter.gateway_runner = SimpleNamespace(
+            session_store=store,
+            _session_key_for_source=lambda _source: "shared-group-key",
+            _profile_name_for_source=lambda _source: "public",
+        )
+
+        async def fake_handle_message(event):
+            handled.append(event)
+
+        async def fake_api_get(_path):
+            return {
+                "data": [
+                    {
+                        "guid": "msg-current",
+                        "text": "Clu, what did Pat ask?",
+                        "dateCreated": 400,
+                        "handle": {"address": "+15555550102"},
+                    },
+                    {
+                        "guid": "msg-agent",
+                        "text": "A prior Clu answer",
+                        "dateCreated": 300,
+                        "isFromMe": True,
+                    },
+                    {
+                        "guid": "msg-old",
+                        "text": "the question Clu must recall",
+                        "dateCreated": 200,
+                        "handle": {"address": "+15555550103"},
+                    },
+                ]
+            }
+
+        monkeypatch.setattr(adapter, "handle_message", fake_handle_message)
+        monkeypatch.setattr(adapter, "_api_get", fake_api_get)
+        response = await adapter._handle_webhook(
+            _FakeBlueBubblesRequest(
+                {
+                    "type": "new-message",
+                    "data": {
+                        "guid": "msg-current",
+                        "text": "Clu, what did Pat ask?",
+                        "dateCreated": 400,
+                        "handle": {"address": "+15555550102"},
+                        "isFromMe": False,
+                        "isGroup": True,
+                        "chats": [{"guid": "iMessage;+;group-chat"}],
+                    },
+                }
+            )
+        )
+        await asyncio.sleep(0)
+
+        assert response.status == 200
+        assert len(handled) == 1
+        context = handled[0].channel_context
+        assert "[Recent group history bootstrap]" in context
+        assert "[Clu] A prior Clu answer" in context
+        assert "[+15555550103] the question Clu must recall" in context
+        assert context.index("the question Clu must recall") < context.index(
+            "A prior Clu answer"
+        )
 
 
 class TestBlueBubblesWebhookParsing:
