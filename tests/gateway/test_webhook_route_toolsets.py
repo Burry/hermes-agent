@@ -71,6 +71,17 @@ class TestWebhookAdapterToolsetsForSource:
 
 
 class TestGatewayResolveEnabledToolsetsForSource:
+    def test_explicit_empty_override_disables_all_tools(self):
+        adapter = _make_adapter({})
+        adapter.toolsets_for_source = lambda source: []
+        runner = _make_runner(adapter)
+
+        result = GatewayRunner._resolve_enabled_toolsets_for_source(
+            runner, BASE_CONFIG, _Src("bluebubbles:any;+;group"), "bluebubbles"
+        )
+
+        assert result == []
+
     def test_override_replaces_platform_resolution(self):
         wa = _make_adapter(
             {"mon": {"secret": "x", "toolsets": ["terminal", "file", "web"]}}

@@ -110,6 +110,25 @@ class TestBlueBubblesHelpers:
         adapter = _make_adapter(monkeypatch, server_url="http://localhost:1234/")
         assert adapter.server_url == "http://localhost:1234"
 
+    def test_channel_toolsets_can_disable_tools_for_one_chat(self, monkeypatch):
+        chat_id = "any;+;group-chat"
+        adapter = _make_adapter(monkeypatch, channel_toolsets={chat_id: []})
+
+        assert adapter.toolsets_for_source(SimpleNamespace(chat_id=chat_id)) == []
+        assert adapter.toolsets_for_source(SimpleNamespace(chat_id="any;+;other")) is None
+
+    def test_channel_toolsets_normalize_configured_names(self, monkeypatch):
+        chat_id = "any;+;group-chat"
+        adapter = _make_adapter(
+            monkeypatch,
+            channel_toolsets={chat_id: [" web ", "", "clarify"]},
+        )
+
+        assert adapter.toolsets_for_source(SimpleNamespace(chat_id=chat_id)) == [
+            "web",
+            "clarify",
+        ]
+
 
 class _FakeBlueBubblesRequest:
     def __init__(self, payload, password="secret"):

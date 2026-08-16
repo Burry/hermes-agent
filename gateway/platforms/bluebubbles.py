@@ -202,6 +202,10 @@ class BlueBubblesAdapter(BasePlatformAdapter):
             "yes",
             "on",
         }
+        channel_toolsets = extra.get("channel_toolsets")
+        self.channel_toolsets = (
+            dict(channel_toolsets) if isinstance(channel_toolsets, dict) else {}
+        )
         try:
             history_backfill_limit = int(
                 extra.get("history_backfill_limit", _DEFAULT_HISTORY_BACKFILL_LIMIT)
@@ -248,6 +252,18 @@ class BlueBubblesAdapter(BasePlatformAdapter):
         if not text or not self._mention_patterns:
             return False
         return any(pattern.search(text) for pattern in self._mention_patterns)
+
+    def toolsets_for_source(self, source: Any) -> Optional[List[str]]:
+        """Return an optional toolset override for one BlueBubbles chat."""
+        chat_id = str(getattr(source, "chat_id", "") or "")
+        if chat_id not in self.channel_toolsets:
+            return None
+
+        toolsets = self.channel_toolsets[chat_id]
+        if not isinstance(toolsets, list):
+            return None
+
+        return [str(toolset).strip() for toolset in toolsets if str(toolset).strip()]
 
     def _clean_mention_text(self, text: str) -> str:
         """Strip a leading BlueBubbles wake word before dispatch.

@@ -22116,7 +22116,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         """Resolve enabled toolsets for an agent run, honoring per-source overrides.
 
         Asks the receiving adapter for a ``toolsets_for_source()`` override
-        (e.g. per-route webhook toolsets). When present, the override list is
+        (e.g. per-route webhook or per-chat BlueBubbles toolsets). An empty
+        override disables all tools for the source. A non-empty override is
         validated through the SAME ``_get_platform_tools`` path as normal
         platform config — by substituting it as the platform's toolset list —
         so unknown names and platform-restricted toolsets are dropped rather
@@ -22133,7 +22134,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         except Exception:
             override = None
 
-        if override and isinstance(override, list):
+        if isinstance(override, list):
+            if not override:
+                return []
             cfg = dict(user_config)
             pts = dict(cfg.get("platform_toolsets") or {})
             pts[platform_key] = [str(t) for t in override]
