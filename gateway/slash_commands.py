@@ -1760,7 +1760,11 @@ class GatewaySlashCommandsMixin:
           /model <name> --provider <provider> — switch provider + model
           /model --provider <provider>        — switch to provider, auto-detect model
         """
-        from gateway.run import _hermes_home, _load_gateway_config
+        from gateway.run import (
+            _get_channel_override,
+            _hermes_home,
+            _load_gateway_config,
+        )
         from hermes_cli.model_switch import (
             switch_model as _switch_model, parse_model_switch_args,
             resolve_persist_behavior,
@@ -1833,13 +1837,35 @@ class GatewaySlashCommandsMixin:
         except Exception:
             pass
 
-        # Check for session override. Normalize the source the same way a normal
-        # message turn does
+        # Check for channel and session overrides. Normalize the source the same
+        # way a normal message turn does
         # (Telegram DM topic recovery) before deriving the override key, so
         # the override is stored under the key the next message turn reads
         # (#30479).
         source = await asyncio.to_thread(self._normalize_source_for_session_key, source)
         session_key = self._session_key_for_source(source)
+        gateway_config = getattr(self, "config", None)
+        channel_override = None
+        if gateway_config is not None:
+            channel_override = _get_channel_override(
+                gateway_config,
+                source.platform,
+                str(source.chat_id or ""),
+                thread_id=str(source.thread_id) if source.thread_id else None,
+                parent_id=(
+                    str(source.parent_chat_id)
+                    if getattr(source, "parent_chat_id", None)
+                    else None
+                ),
+            )
+        if channel_override:
+            if channel_override.model:
+                current_model = channel_override.model
+            if channel_override.provider:
+                if channel_override.provider != current_provider:
+                    current_base_url = ""
+                    current_api_key = ""
+                current_provider = channel_override.provider
         override = self._session_model_overrides.get(session_key, {})
         restore_snapshot = (
             self._snapshot_session_model_override(session_key) if one_turn else None
