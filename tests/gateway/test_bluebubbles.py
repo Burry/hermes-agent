@@ -100,6 +100,17 @@ class TestBlueBubblesHelpers:
         adapter = _make_adapter(monkeypatch)
         assert adapter.format_message("## Heading\ntext") == "Heading\ntext"
 
+    @pytest.mark.parametrize(
+        "prefix",
+        ["[Clu] ", "Clu: ", "[assistant] ", "Assistant: "],
+    )
+    def test_format_message_strips_assistant_speaker_prefix(
+        self, monkeypatch, prefix
+    ):
+        adapter = _make_adapter(monkeypatch)
+
+        assert adapter.format_message(f"{prefix}Hello there") == "Hello there"
+
 
     def test_init_normalizes_webhook_path(self, monkeypatch):
         adapter = _make_adapter(monkeypatch, webhook_path="bluebubbles-webhook")
@@ -128,6 +139,30 @@ class TestBlueBubblesHelpers:
             "web",
             "clarify",
         ]
+
+
+class TestBlueBubblesSend:
+    @pytest.mark.asyncio
+    async def test_multi_paragraph_reply_stays_in_one_bubble(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch)
+        payloads = []
+
+        async def resolve_chat_guid(_chat_id):
+            return "iMessage;+;group-chat"
+
+        async def api_post(path, payload):
+            assert path == "/api/v1/message/text"
+            payloads.append(payload)
+            return {"data": {"guid": "message-1"}}
+
+        monkeypatch.setattr(adapter, "_resolve_chat_guid", resolve_chat_guid)
+        monkeypatch.setattr(adapter, "_api_post", api_post)
+
+        result = await adapter.send("group-chat", "First thought.\n\nSecond thought.")
+
+        assert result.success is True
+        assert len(payloads) == 1
+        assert payloads[0]["message"] == "First thought.\n\nSecond thought."
 
 
 class _FakeBlueBubblesRequest:
@@ -344,7 +379,8 @@ class TestBlueBubblesMentionGating:
         assert len(handled) == 1
         context = handled[0].channel_context
         assert "[Recent group history bootstrap]" in context
-        assert "[Clu] A prior Clu answer" in context
+        assert "[assistant] A prior Clu answer" in context
+        assert "Do not copy a label" in context
         assert "[+15555550103] the question Clu must recall" in context
         assert context.index("the question Clu must recall") < context.index(
             "A prior Clu answer"
