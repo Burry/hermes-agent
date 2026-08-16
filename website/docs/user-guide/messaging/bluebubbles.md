@@ -52,6 +52,17 @@ platforms:
 
 With `require_mention: true`, DMs still work normally, but group-chat messages are ignored unless they match a mention pattern. If you do not configure custom patterns, Hermes uses conservative defaults for `Hermes` and `@Hermes agent` variants.
 
+To let a mentioned agent catch up on group messages sent since its previous reply, enable history backfill. The messages become read-only channel context for that turn; they do not wake the agent or create separate turns.
+
+```yaml
+platforms:
+  bluebubbles:
+    extra:
+      require_mention: true
+      history_backfill: true
+      history_backfill_limit: 50
+```
+
 For a custom agent name, set regex patterns:
 
 ```yaml
@@ -168,4 +179,3 @@ Without the Private API, basic text messaging and media still work.
 ### "Private API helper not connected"
 - Install the Private API helper: [docs.bluebubbles.app](https://docs.bluebubbles.app/helper-bundle/installation)
 - Basic messaging works without it — only reactions, typing, and read receipts require it
-
