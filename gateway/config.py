@@ -588,7 +588,7 @@ class SessionResetPolicy:
 @dataclass
 class ChannelOverride:
     """
-    Per-channel override for model, provider, and system prompt.
+    Per-channel override for model, provider, output cap, and system prompt.
 
     Used in config under platforms.<name>.channel_overrides[channel_id].
     Enables different channels (e.g. Discord #daily vs #dev) to use different
@@ -596,6 +596,7 @@ class ChannelOverride:
     """
     model: Optional[str] = None
     provider: Optional[str] = None
+    max_tokens: Optional[int] = None
     system_prompt: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -604,6 +605,8 @@ class ChannelOverride:
             out["model"] = self.model
         if self.provider is not None:
             out["provider"] = self.provider
+        if self.max_tokens is not None:
+            out["max_tokens"] = self.max_tokens
         if self.system_prompt is not None:
             out["system_prompt"] = self.system_prompt
         return out
@@ -615,6 +618,10 @@ class ChannelOverride:
         return cls(
             model=data.get("model"),
             provider=data.get("provider"),
+            max_tokens=_coerce_optional_positive_int(
+                data.get("max_tokens"),
+                "channel_overrides.max_tokens",
+            ),
             system_prompt=data.get("system_prompt"),
         )
 
@@ -674,7 +681,7 @@ class PlatformConfig:
     # Telegram, Matrix, …) ignore it.
     typing_status_text: Optional[str] = None
 
-    # Per-channel model/provider/system_prompt overrides (channel_id -> ChannelOverride)
+    # Per-channel model/provider/max_tokens/system_prompt overrides.
     channel_overrides: Dict[str, ChannelOverride] = field(default_factory=dict)
 
     # Platform-specific settings

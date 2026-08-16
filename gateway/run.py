@@ -7943,6 +7943,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     # did not specify an explicit model.
                     if ch_runtime_model and not ch.model:
                         model = ch_runtime_model
+                if ch.max_tokens is not None:
+                    runtime_kwargs["max_tokens"] = ch.max_tokens
 
         if override and resolved_session_key:
             model, runtime_kwargs = self._apply_session_model_override(

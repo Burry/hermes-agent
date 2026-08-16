@@ -68,6 +68,21 @@ class TestParseDashScopeOutputCap:
         assert parse_available_output_tokens_from_error(msg) == 32768
 
 
+class TestParseVeniceOutputCap:
+    """Venice reports the model's hard output cap directly."""
+
+    _VENICE_MSG = (
+        "Requested max_tokens or max_completion_tokens of 65536, "
+        "but the maximum allowed is 24000"
+    )
+
+    def test_venice_maximum_allowed_format(self):
+        assert parse_available_output_tokens_from_error(self._VENICE_MSG) == 24000
+
+    def test_venice_is_output_cap(self):
+        assert is_output_cap_error(self._VENICE_MSG) is True
+
+
 class TestIsOutputCapError:
     """`is_output_cap_error` is the broader yes/no gate that keeps an
     output-cap 400 out of the compression death-loop even when we can't parse
@@ -131,4 +146,3 @@ class TestParseVllmTokenBasedOutputCap:
         available = parse_available_output_tokens_from_error(self._VLLM_MSG)
         assert available is not None
         assert available + 65537 <= 131072
-

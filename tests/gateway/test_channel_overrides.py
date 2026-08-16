@@ -34,6 +34,7 @@ class TestGetChannelOverride:
         ov = ChannelOverride(
             model="openrouter/healer-alpha",
             provider="openrouter",
+            max_tokens=8192,
             system_prompt="You are a summarizer.",
         )
         config = GatewayConfig(
@@ -48,6 +49,7 @@ class TestGetChannelOverride:
         assert result is not None
         assert result.model == "openrouter/healer-alpha"
         assert result.provider == "openrouter"
+        assert result.max_tokens == 8192
         assert result.system_prompt == "You are a summarizer."
 
 
@@ -120,6 +122,7 @@ class TestResolveSessionAgentRuntimePriority:
                         "chan_1": ChannelOverride(
                             model="channel/model",
                             provider="openrouter",
+                            max_tokens=24000,
                         ),
                     },
                 ),
@@ -152,5 +155,5 @@ class TestResolveSessionAgentRuntimePriority:
             )
         assert model == "channel/model"
         assert runtime["provider"] == "openrouter"
-
+        assert runtime["max_tokens"] == 24000
 

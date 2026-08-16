@@ -1659,6 +1659,13 @@ def parse_available_output_tokens_from_error(error_msg: str) -> Optional[int]:
         # The input itself fits — this is purely an output-cap error, so reduce
         # max_tokens and retry; do NOT compress.
         "range of max_tokens should be" in error_lower
+    ) or (
+        # Venice OpenAI-compatible phrasing. The reported maximum is the
+        # model's hard output cap, independent of the input context size:
+        #   "Requested max_tokens or max_completion_tokens of 65536, but the
+        #    maximum allowed is 24000"
+        ("max_tokens" in error_lower or "max_completion_tokens" in error_lower)
+        and "maximum allowed is" in error_lower
     )
     if not is_output_cap_error:
         return None
@@ -1671,6 +1678,13 @@ def parse_available_output_tokens_from_error(error_msg: str) -> Optional[int]:
     )
     if _m_range:
         _cap = int(_m_range.group(1))
+        if _cap >= 1:
+            return _cap
+
+    # Venice: "maximum allowed is 24000".
+    _m_maximum_allowed = re.search(r'maximum allowed is\s*(\d+)', error_lower)
+    if _m_maximum_allowed:
+        _cap = int(_m_maximum_allowed.group(1))
         if _cap >= 1:
             return _cap
 
@@ -1782,6 +1796,7 @@ def is_output_cap_error(error_msg: str) -> bool:
         or "should be" in error_lower                       # generic "max_tokens should be <= N"
         or "less than or equal" in error_lower
         or "must be" in error_lower
+        or "maximum allowed is" in error_lower              # Venice
     )
     if not output_cap_signal:
         return False
