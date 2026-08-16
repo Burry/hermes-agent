@@ -154,3 +154,42 @@ class TestResetNoticeSessionInfo:
         assert "anthropic" in info
         assert "base-model" not in info
 
+    def test_channel_override_beats_profile_default(self, runner, tmp_path):
+        from types import SimpleNamespace
+
+        from gateway.config import Platform
+        from gateway.session import SessionSource
+
+        source = SessionSource(
+            platform=Platform.BLUEBUBBLES,
+            chat_id="group-1",
+            chat_type="group",
+            profile="public",
+        )
+        runner.config = SimpleNamespace(multiplex_profiles=False)
+        p1, p2, p3 = _patch_info(
+            tmp_path,
+            "model:\n  default: grok-4.5\n  provider: xai-oauth\n",
+            "grok-4.5",
+            {
+                "provider": "xai-oauth",
+                "base_url": "https://api.x.ai/v1",
+                "api_key": "xai-key",
+            },
+        )
+        channel_runtime = {
+            "provider": "venice",
+            "base_url": "https://api.venice.ai/api/v1",
+            "api_key": "venice-key",
+        }
+        with p1, p2, p3, patch.object(
+            runner,
+            "_resolve_session_agent_runtime",
+            return_value=("venice-uncensored-1-2", channel_runtime),
+        ) as resolve_runtime:
+            info = runner._reset_notice_session_info(source)
+
+        resolve_runtime.assert_called_once()
+        assert "venice-uncensored-1-2" in info
+        assert "venice" in info
+        assert "grok-4.5" not in info
