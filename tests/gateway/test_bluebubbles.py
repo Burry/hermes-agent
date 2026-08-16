@@ -400,7 +400,8 @@ class TestBlueBubblesMentionGating:
         store = SimpleNamespace(
             peek_session_id=lambda _key: "fresh-session",
             lookup_by_session_key=lambda _key: SimpleNamespace(
-                is_fresh_reset=True
+                is_fresh_reset=False,
+                metadata={"explicit_reset_boundary": True},
             ),
             load_transcript=lambda _session_id: transcript,
         )

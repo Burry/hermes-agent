@@ -70,6 +70,7 @@ class TestResetSessionStampsFreshReset:
 
         assert new_entry is not None
         assert new_entry.is_fresh_reset is True
+        assert new_entry.metadata["explicit_reset_boundary"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -130,4 +131,3 @@ class TestPersistence:
         assert new_entry.is_fresh_reset is True
         restored = SessionEntry.from_dict(new_entry.to_dict())
         assert restored.is_fresh_reset is True
-

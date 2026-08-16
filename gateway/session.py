@@ -3363,6 +3363,7 @@ class SessionStore:
                 platform=old_entry.platform,
                 chat_type=old_entry.chat_type,
                 is_fresh_reset=True,
+                metadata={"explicit_reset_boundary": True},
             )
 
             self._entries[session_key] = new_entry

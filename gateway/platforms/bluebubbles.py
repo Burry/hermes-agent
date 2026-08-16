@@ -336,8 +336,8 @@ class BlueBubblesAdapter(BasePlatformAdapter):
             if isinstance(message, dict)
         )
 
-    def _is_fresh_reset_session(self, source: Any) -> bool:
-        """Return whether this route was created by an explicit reset."""
+    def _has_explicit_reset_boundary(self, source: Any) -> bool:
+        """Return whether this route must exclude pre-reset chat history."""
         runner = getattr(self, "gateway_runner", None)
         store = getattr(runner, "session_store", None)
         key_fn = getattr(runner, "_session_key_for_source", None)
@@ -352,7 +352,15 @@ class BlueBubblesAdapter(BasePlatformAdapter):
                 exc_info=True,
             )
             return False
-        return bool(getattr(entry, "is_fresh_reset", False))
+        metadata = getattr(entry, "metadata", None)
+        durable_boundary = (
+            metadata.get("explicit_reset_boundary")
+            if isinstance(metadata, dict)
+            else False
+        )
+        return bool(
+            getattr(entry, "is_fresh_reset", False) or durable_boundary
+        )
 
     @classmethod
     def _skip_history_record(
@@ -477,7 +485,7 @@ class BlueBubblesAdapter(BasePlatformAdapter):
         if not self.history_backfill or self.history_backfill_limit <= 0:
             return ""
 
-        fresh_reset = self._is_fresh_reset_session(source)
+        fresh_reset = self._has_explicit_reset_boundary(source)
         bootstrap = (
             not fresh_reset and not self._has_group_history_bootstrap(source)
         )
