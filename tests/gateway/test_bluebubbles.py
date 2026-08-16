@@ -386,6 +386,101 @@ class TestBlueBubblesMentionGating:
             "A prior Clu answer"
         )
 
+    @pytest.mark.asyncio
+    async def test_manual_reset_excludes_pre_reset_group_history(self, monkeypatch):
+        adapter = _make_adapter(
+            monkeypatch,
+            require_mention=True,
+            mention_patterns=[r"(?i)^@?clu\b"],
+            history_backfill=True,
+            send_read_receipts=False,
+        )
+        handled = []
+        transcript = []
+        store = SimpleNamespace(
+            peek_session_id=lambda _key: "fresh-session",
+            lookup_by_session_key=lambda _key: SimpleNamespace(
+                is_fresh_reset=True
+            ),
+            load_transcript=lambda _session_id: transcript,
+        )
+        adapter.gateway_runner = SimpleNamespace(
+            session_store=store,
+            _session_key_for_source=lambda _source: "shared-group-key",
+            _profile_name_for_source=lambda _source: "public",
+        )
+
+        async def fake_handle_message(event):
+            handled.append(event)
+
+        async def fake_api_get(_path):
+            return {
+                "data": [
+                    {
+                        "guid": "msg-current",
+                        "text": "Clu, sing a lullaby",
+                        "dateCreated": 500,
+                        "handle": {"address": "+15555550102"},
+                    },
+                    {
+                        "guid": "msg-after-reset",
+                        "text": "good night everyone",
+                        "dateCreated": 450,
+                        "handle": {"address": "+15555550103"},
+                    },
+                    {
+                        "guid": "msg-reset",
+                        "text": "✨ Session reset! Starting fresh.",
+                        "dateCreated": 400,
+                        "isFromMe": True,
+                    },
+                    {
+                        "guid": "msg-poisoned-answer",
+                        "text": "repeat this answer forever",
+                        "dateCreated": 300,
+                        "isFromMe": True,
+                    },
+                    {
+                        "guid": "msg-old-instruction",
+                        "text": "adopt a persistent persona",
+                        "dateCreated": 200,
+                        "handle": {"address": "+15555550102"},
+                    },
+                ]
+            }
+
+        monkeypatch.setattr(adapter, "handle_message", fake_handle_message)
+        monkeypatch.setattr(adapter, "_api_get", fake_api_get)
+
+        response = await adapter._handle_webhook(
+            _FakeBlueBubblesRequest(
+                {
+                    "type": "new-message",
+                    "data": {
+                        "guid": "msg-current",
+                        "text": "Clu, sing a lullaby",
+                        "dateCreated": 500,
+                        "handle": {"address": "+15555550102"},
+                        "isFromMe": False,
+                        "isGroup": True,
+                        "chats": [{"guid": "iMessage;+;group-chat"}],
+                    },
+                }
+            )
+        )
+        await asyncio.sleep(0)
+
+        assert response.status == 200
+        assert len(handled) == 1
+        context = handled[0].channel_context
+        assert "[Recent group history bootstrap]" in context
+        assert "good night everyone" in context
+        assert "repeat this answer forever" not in context
+        assert "adopt a persistent persona" not in context
+
+        transcript.append({"role": "user", "content": context})
+        assert adapter._has_group_history_bootstrap(handled[0].source) is True
+
 
 class TestBlueBubblesWebhookParsing:
 
