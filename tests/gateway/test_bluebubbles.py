@@ -323,14 +323,17 @@ class TestBlueBubblesAttachmentSend:
 
 
 class TestBlueBubblesWebhookUrl:
-    """_webhook_url property normalises local hosts to 'localhost'."""
+    """_webhook_url preserves concrete hosts and normalises wildcard binds."""
 
     def test_default_host(self, monkeypatch):
         adapter = _make_adapter(monkeypatch)
-        # Default webhook_host is 0.0.0.0 → normalized to localhost
-        assert "localhost" in adapter._webhook_url
+        assert "127.0.0.1" in adapter._webhook_url
         assert str(adapter.webhook_port) in adapter._webhook_url
         assert adapter.webhook_path in adapter._webhook_url
+
+    def test_wildcard_host_is_normalized_to_localhost(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, webhook_host="0.0.0.0")
+        assert "localhost" in adapter._webhook_url
 
 
     def test_register_url_omits_query_when_no_password(self, monkeypatch):
@@ -565,5 +568,4 @@ class TestBlueBubblesTimeoutErrorNormalization:
 
         assert not result.success
         assert "500 Internal Server Error" in (result.error or "")
-
 

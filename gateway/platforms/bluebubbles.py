@@ -340,7 +340,11 @@ class BlueBubblesAdapter(BasePlatformAdapter):
     def _webhook_url(self) -> str:
         """Compute the external webhook URL for BlueBubbles registration."""
         host = self.webhook_host
-        if host in {"0.0.0.0", "127.0.0.1", "localhost", "::"}:
+        # Wildcard bind addresses are not valid callback destinations. Preserve
+        # an explicit IPv4 loopback address, though: rewriting 127.0.0.1 to
+        # ``localhost`` lets some Node runtimes prefer ::1 while aiohttp is
+        # listening only on IPv4, causing silent webhook delivery failures.
+        if host in {"0.0.0.0", "::"}:
             host = "localhost"
         return f"http://{host}:{self.webhook_port}{self.webhook_path}"
 
