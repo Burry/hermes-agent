@@ -123,6 +123,7 @@ _PHONE_RE = re.compile(r"\+?\d{7,15}")
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 
 _GUID_CACHE_SIZE = 500  # LRU cap for resolved chat-GUID lookups
+_INBOUND_MESSAGE_CACHE_SIZE = 1000  # LRU cap for webhook replay protection
 
 
 def _redact(text: str) -> str:
@@ -203,6 +204,58 @@ class BlueBubblesAdapter(BasePlatformAdapter):
         self._private_api_enabled: Optional[bool] = None
         self._helper_connected: bool = False
         self._guid_cache: OrderedDict[str, str] = OrderedDict()
+        # BlueBubbles can emit both ``new-message`` and ``updated-message``
+        # webhooks for the same iMessage GUID.  Keep this cache adapter-wide,
+        # before session routing, so a malformed replay cannot become a second
+        # turn merely by being misclassified into another chat.
+        self._inbound_message_chats: OrderedDict[str, str] = OrderedDict()
+
+    def _remember_inbound_message(
+        self, message_guid: Optional[str], chat_id: str
+    ) -> bool:
+        """Record an accepted inbound message, returning False for a replay.
+
+        The value is also used by :meth:`send` to ensure an iMessage reply
+        anchor belongs to the destination chat.  Entries are intentionally
+        in-memory: this protects duplicate webhooks in one server delivery
+        cycle without suppressing a legitimate redelivery after a restart.
+        """
+        if not message_guid:
+            return True
+        previous_chat = self._inbound_message_chats.get(message_guid)
+        if previous_chat is not None:
+            self._inbound_message_chats.move_to_end(message_guid)
+            if previous_chat != chat_id:
+                logger.warning(
+                    "[bluebubbles] ignoring replayed message %s routed from %s to %s",
+                    _redact(message_guid),
+                    _redact(previous_chat),
+                    _redact(chat_id),
+                )
+            else:
+                logger.debug(
+                    "[bluebubbles] ignoring duplicate webhook for message %s",
+                    _redact(message_guid),
+                )
+            return False
+        self._inbound_message_chats[message_guid] = chat_id
+        while len(self._inbound_message_chats) > _INBOUND_MESSAGE_CACHE_SIZE:
+            self._inbound_message_chats.popitem(last=False)
+        return True
+
+    async def _reply_anchor_matches_chat(self, reply_to: str, chat_guid: str) -> bool:
+        """Return False when a known reply anchor belongs to another chat."""
+        source_chat = self._inbound_message_chats.get(reply_to)
+        if source_chat is None:
+            # Older/resumed sends may predate this process-local cache.  The
+            # parser guards still prevent the malformed live-webhook case.
+            return True
+        source_guid = await self._resolve_chat_guid(source_chat)
+        if source_guid is None:
+            # A raw BlueBubbles GUID is already canonical; a bare identifier
+            # that cannot be resolved is not safe as a private-API anchor.
+            source_guid = source_chat if ";" in source_chat else None
+        return source_guid is not None and source_guid == chat_guid
 
     # ------------------------------------------------------------------
     # API helpers
@@ -576,9 +629,23 @@ class BlueBubblesAdapter(BasePlatformAdapter):
                 "tempGuid": f"temp-{datetime.utcnow().timestamp()}",
                 "message": chunk,
             }
-            if reply_to and self._private_api_enabled and self._helper_connected:
+            effective_reply_to = reply_to
+            if effective_reply_to and not await self._reply_anchor_matches_chat(
+                effective_reply_to, guid
+            ):
+                logger.warning(
+                    "[bluebubbles] dropping cross-chat reply anchor %s for destination %s",
+                    _redact(effective_reply_to),
+                    _redact(guid),
+                )
+                effective_reply_to = None
+            if (
+                effective_reply_to
+                and self._private_api_enabled
+                and self._helper_connected
+            ):
                 payload["method"] = "private-api"
-                payload["selectedMessageGuid"] = reply_to
+                payload["selectedMessageGuid"] = effective_reply_to
                 payload["partIndex"] = 0
             try:
                 res = await self._api_post("/api/v1/message/text", payload)
@@ -1031,6 +1098,15 @@ class BlueBubblesAdapter(BasePlatformAdapter):
             or chat_identifier
             or chat_guid
         )
+        # An updated-message webhook may contain only the message GUID, text,
+        # and sender.  Falling back to the sender in that shape fabricates a DM
+        # for a message that can canonically belong to a group chat.  Only a
+        # new/legacy message event may use the bare-sender DM fallback.
+        if event_type == "updated-message" and not (chat_guid or chat_identifier):
+            logger.debug(
+                "[bluebubbles] ignoring updated-message without chat identity"
+            )
+            return web.Response(text="ok")
         if not (chat_guid or chat_identifier) and sender:
             chat_identifier = sender
         if not sender or not (chat_guid or chat_identifier) or not text:
@@ -1045,6 +1121,13 @@ class BlueBubblesAdapter(BasePlatformAdapter):
                 )
                 return web.Response(text="ok")
             text = self._clean_mention_text(text)
+        message_guid = self._value(
+            record.get("guid"),
+            record.get("messageGuid"),
+            record.get("id"),
+        )
+        if not self._remember_inbound_message(message_guid, session_chat_id):
+            return web.Response(text="ok")
         source = self.build_source(
             chat_id=session_chat_id,
             chat_name=chat_identifier or sender,
@@ -1058,11 +1141,7 @@ class BlueBubblesAdapter(BasePlatformAdapter):
             message_type=msg_type,
             source=source,
             raw_message=payload,
-            message_id=self._value(
-                record.get("guid"),
-                record.get("messageGuid"),
-                record.get("id"),
-            ),
+            message_id=message_guid,
             reply_to_message_id=self._value(
                 record.get("threadOriginatorGuid"),
                 record.get("associatedMessageGuid"),
